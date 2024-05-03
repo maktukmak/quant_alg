@@ -4,8 +4,7 @@ torch.set_printoptions(precision=5)
 import time
 from scipy.spatial import distance
 import numpy as np
-import kmeans1d
-import fast1dkmeans
+
 
 
 class quantizer_weight():
@@ -93,7 +92,7 @@ class quantizer_weight():
                 return
             err_prev = err
 
-        print('Not converged')
+        print('NOT CONVERGED !!!')
         print(err)
 
     def fit_nonuniform_prob(self, x):
