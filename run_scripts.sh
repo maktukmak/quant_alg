@@ -6,6 +6,9 @@
 export http_proxy=http://proxy-chain.intel.com:911
 export https_proxy=https://proxy-chain.intel.com:912
 
+export http_proxy=http://proxy.ra.intel.com:911
+export https_proxy=http://proxy.ra.intel.com:911
+
 
 # Quantize model
 nohup python -u test_model_quant.py --calib --model_name facebook/opt-125m --b 4 > ./log/out_quant.txt &
