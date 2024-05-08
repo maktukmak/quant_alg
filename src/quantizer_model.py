@@ -33,6 +33,7 @@ class quantizer_model():
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Linear) and name not in self.exclude_layers:
                 module.weight.register_hook(self.square_grad_hook)
+
         model.cuda()
         for data in tqdm(dataloader):
             data = data[0]

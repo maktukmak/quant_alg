@@ -4,6 +4,7 @@ torch.set_printoptions(precision=5)
 import time
 from scipy.spatial import distance
 import numpy as np
+from sklearn.cluster import KMeans
 
 # Methods
 # - Min-max
@@ -23,6 +24,8 @@ class quantizer_weight():
         self.k_list = torch.arange(0, self.N-1).to(torch.int) # Integer set (labels)
         if f is None:
             self.f = torch.ones(x.shape)
+
+        self.sk_kmeans = True
 
         #Initialize with min-max
         self.fit_minmax(x)
@@ -80,28 +83,33 @@ class quantizer_weight():
 
         x_sorted = torch.sort(x[self.f > 0])[0]
         self.lk = x_sorted[((len(x_sorted)-1) // (self.N - 2)) * self.k_list]
-        
-        err_prev = 1e10
-        for _ in range(500):
 
-            xint = self.quant(x)
-            err = self.error(x, xint)
-            
+        if self.sk_kmeans:
+            kmeans = KMeans(n_clusters=self.N-1, init=self.lk.reshape(-1,1), max_iter=500, tol=1e-5)
+            kmeans.fit(x.reshape(-1,1), self.f, )
 
-            if verbose:
-                print(err)
+        else:
+            err_prev = 1e10
+            for _ in range(500):
 
-            for k in self.k_list:
-                ind = (xint == k)
-                self.lk[k] = torch.sum(x[ind] * self.f[ind]) / torch.sum(self.f[ind])
+                xint = self.quant(x)
+                err = self.error(x, xint)
+                
 
-            if abs(err_prev - err) / err < 1e-5:
-                print('Loss', err)
-                return
-            err_prev = err
+                if verbose:
+                    print(err)
 
-        print('NOT CONVERGED !!!')
-        print(err)
+                for k in self.k_list:
+                    ind = (xint == k)
+                    self.lk[k] = torch.sum(x[ind] * self.f[ind]) / torch.sum(self.f[ind])
+
+                if abs(err_prev - err) / err < 1e-5:
+                    print('Loss', err)
+                    return
+                err_prev = err
+
+            print('NOT CONVERGED !!!')
+            print(err)
 
     def fit_nonuniform_prob(self, x):
         # Not done yet
