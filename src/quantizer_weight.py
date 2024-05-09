@@ -78,7 +78,7 @@ class quantizer_weight():
 
     def fit_nonuniform(self, x, verbose=False):
 
-        x_sorted = torch.sort(x)[0]
+        x_sorted = torch.sort(x[self.f > 0])[0]
         self.lk = x_sorted[((len(x_sorted)-1) // (self.N - 2)) * self.k_list]
         
         err_prev = 1e10
@@ -96,7 +96,7 @@ class quantizer_weight():
                 self.lk[k] = torch.sum(x[ind] * self.f[ind]) / torch.sum(self.f[ind])
 
             if abs(err_prev - err) / err < 1e-5:
-                print('Error', err)
+                print('Loss', err)
                 return
             err_prev = err
 

@@ -59,14 +59,15 @@ class quantizer_model():
                 F = get_module_by_name(fisher, name).weight.detach().flatten()
 
                 shape = module.weight.shape
-                w = module.weight.detach().flatten()
+                w = module.weight.detach().flatten().type(torch.float32)
                 quant = self.quantizer(w, b=self.b)
                 s = time.time()
-                quant.fit_nonuniform(w)
+                quant.f = F.type(torch.float32)
+                quant.fit_nonuniform(w, verbose=False)
                 print('Time:', time.time()-s)
 
                 if self.fake_quant:
-                    module.weight.data = quant.lk[quant.quant(w).reshape(shape)]
+                    module.weight.data = quant.lk[quant.quant(w).reshape(shape)].type(module.weight.dtype)
                 else:   
                     module.levels = torch.nn.Parameter(quant.lk)
                     module.weight.data = quant.lk[quant.quant(w).reshape(shape)]
