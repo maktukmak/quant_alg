@@ -5,6 +5,14 @@ import time
 from scipy.spatial import distance
 import numpy as np
 
+# Methods
+# - Min-max
+# - Uniform optimum
+# - Nonuniform optimum
+# - SqueezeLLM
+
+# - GPTQ with ADMM
+
 
 
 class quantizer_weight():

@@ -10,6 +10,7 @@ parser = argparse.ArgumentParser(description='Model quantizer')
 parser.add_argument("--model_name", type=str, default='facebook/opt-125m')
 parser.add_argument("--b", type=int, default=4, help='Bit number')
 parser.add_argument("--calib", action='store_true')
+parser.add_argument("--cache_path", type=str, default='./models/')
 args = parser.parse_args()
 
 
@@ -44,12 +45,12 @@ if args.calib:
 
 
     quantizer.calibrate(model, dataloader)
-    save_name = "./models/calib/" + model_save_name
+    save_name = args.cache_path + "/calib/" + model_save_name
 else:
 
-    fisher = AutoModelForCausalLM.from_pretrained("./models/calib/" + model_save_name, torch_dtype="auto").eval()
+    fisher = AutoModelForCausalLM.from_pretrained(args.cache_path + "/calib/" + model_save_name, torch_dtype="auto").eval()
     quantizer.fit_weight(model, fisher)
-    save_name = "./models/quant/" + model_save_name
+    save_name = args.cache_path + "/quant/" + model_save_name
 
 
 model.save_pretrained(save_name, from_pt=True)

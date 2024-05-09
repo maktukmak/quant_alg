@@ -1,25 +1,21 @@
 
 # Models
-# facebook/opt-125m
-# lmsys/vicuna-7b-v1.1
+
+cache_path="/mnt/disk5/maktukmak/models"  #/mnt/disk5/maktukmak/models, ./models
+model_path="$cache_path/quant"   #facebook, lmsys, $cache_path/quant
+model="opt-125m"  #opt-125m, vicuna-7b-v1.1
+
 
 export http_proxy=http://proxy-chain.intel.com:911
 export https_proxy=https://proxy-chain.intel.com:912
-
-export http_proxy=http://proxy.ra.intel.com:911
-export https_proxy=http://proxy.ra.intel.com:911
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
 # Quantize model
-nohup python -u test_model_quant.py --calib --model_name facebook/opt-125m --b 4 > ./log/out_quant.txt &
-nohup python -u test_model_quant.py --model_name facebook/opt-125m --b 4 > ./log/out_quant.txt &
-
+nohup python -u test_model_quant.py --calib --model_name $model_path/$model --cache_path $cache_path --b 4 > ./log/out_quant.txt &
+nohup python -u test_model_quant.py --model_name $model_path/$model --cache_path $cache_path --b 4 > ./log/out_quant.txt &
 
 # Evaluate model
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-CUDA_VISIBLE_DEVICES=1,2 nohup accelerate launch -m lm_eval --model hf --model_args pretrained=facebook/opt-125m --tasks mmlu --batch_size 16  > ./log/out_eval_fp.txt &
+nohup accelerate launch -m lm_eval --model hf --model_args pretrained=$model_path/$model --tasks mmlu --batch_size 16  > ./log/out_eval.txt &
 
-
-CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 nohup accelerate launch -m lm_eval --model hf --model_args pretrained=./models/quant/vicuna-7b-v1.1 --tasks mmlu --batch_size 16  > ./log/out_eval_q.txt &
-
-
+nohup python test_model_eval_visual.py --model_name $model_path/$model > ./log/out_eval.txt &
