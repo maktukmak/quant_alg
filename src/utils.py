@@ -48,11 +48,8 @@ def cast_to_fp8(X, dtype='e4m3'):
     else:
         return None
 
-
     v = 2**(torch.floor(torch.log2(torch.abs(X)) + 2**(-b)) - M)
     v[torch.floor(torch.log2(torch.abs(X)) + b) < 1] = 2**(1-M-b)
     Xf = v * torch.round(X / v)
-
     #Xf = torch.sign(X.flatten()) * G[torch.argmin((torch.abs(X.flatten()[:,None]) - G[None]) ** 2, axis = 1)]
-
     return Xf

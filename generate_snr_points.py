@@ -10,10 +10,11 @@ def g(z, N):
     return 1/(2 * (1 + z) * q(np.sqrt(z)) - np.sqrt(2*z/np.pi) * np.exp(-0.5*z) + z/(3*((N-1)**2)))
 
 
+
 z = np.linspace(1,100,10000)
-N = 2**8
 
-g = g(z, N)
-
-plt.plot(g)
-print(z[np.argmax(g)])
+for b in [2, 3, 4, 8]:
+    N = 2**b
+    gres = g(z, N)
+    #plt.plot(g)
+    print('{} bit: {}'.format(b, z[np.argmax(gres)]))

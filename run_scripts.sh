@@ -1,7 +1,7 @@
 
 # Models
 
-cache_path="./models"  #/mnt/disk5/maktukmak/models, ./models
+cache_path="/mnt/disk5/maktukmak/models"  #/mnt/disk5/maktukmak/models, ./models
 
 #export http_proxy=http://proxy-chain.intel.com:911
 #export https_proxy=https://proxy-chain.intel.com:912
@@ -15,7 +15,7 @@ nohup python -u test_model_quant.py --model_name $model_path/$model --cache_path
 
 # Evaluate model
 model_path=$cache_path/quant 
-model="opt-125m"  #opt-125m, vicuna-7b-v1.1
+model="vicuna-7b-v1.1"  #opt-125m, vicuna-7b-v1.1
 export CUDA_VISIBLE_DEVICES=0,1
 nohup accelerate launch -m lm_eval --model hf --model_args pretrained=$model_path/$model --tasks mmlu --batch_size 16  > ./log/out_eval.txt &
 nohup python test_model_eval_visual.py --model_name $model_path/$model > ./log/out_eval.txt &

@@ -52,29 +52,34 @@ class quantizer_model():
         def get_module_by_name(module, access_string):
             names = access_string.split(sep='.')
             return reduce(getattr, names, module)
-        
+
+
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Linear) and name not in self.exclude_layers:
 
                 print(name)
-                F = get_module_by_name(fisher, name).weight.detach().flatten()
-
                 shape = module.weight.shape
+
+                F = get_module_by_name(fisher, name).weight.detach().flatten()
                 w = module.weight.detach().flatten().type(torch.float32)
-                quant = self.quantizer(w, b=self.b)
+
                 s = time.time()
+                quant = self.quantizer(w, b=self.b)  
                 quant.f = F.type(torch.float32)
                 quant.fit_nonuniform(w, verbose=False)
+                res = quant.lk[quant.quant(w)]
                 print('Time:', time.time()-s)
 
+
                 if self.fake_quant:
-                    module.weight.data = quant.lk[quant.quant(w).reshape(shape)].type(module.weight.dtype)
-                else:   
-                    module.levels = torch.nn.Parameter(quant.lk)
-                    module.weight.data = quant.lk[quant.quant(w).reshape(shape)]
-                    module.weight.requires_grad = False
-                    module.weight.data = quant.quant(w).reshape(shape).to(torch.int8)
-                    self.recursive_setattr(model, name, self.replace_layer(module))
+                    module.weight.data = res.reshape(shape).type(module.weight.dtype)
+
+                # else:   
+                #     module.levels = torch.nn.Parameter(quant.lk)
+                #     module.weight.data = res.reshape(shape)
+                #     module.weight.requires_grad = False
+                #     module.weight.data = quant.quant(w).reshape(shape).to(torch.int8)
+                #     self.recursive_setattr(model, name, self.replace_layer(module))
 
     def replace_layer(self, module):
         shape = module.weight.shape
