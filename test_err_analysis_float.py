@@ -8,6 +8,7 @@ import time
 
 synthetic_data = False
 b = 4
+nblocks=1
 if synthetic_data:
     m = 1024
     #X = 2 * torch.rand([m,m])
@@ -17,6 +18,7 @@ else:
     model = AutoModelForCausalLM.from_pretrained("lmsys/vicuna-7b-v1.1", device_map="cpu").eval()
     x = model.model.layers[0].self_attn.q_proj.weight.detach().flatten().type(torch.float32)
     
+
 
 start = time.time()
 print('Float cast')

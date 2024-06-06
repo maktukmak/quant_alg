@@ -20,11 +20,17 @@ class color:
    END = '\033[0m'
 
 parser = argparse.ArgumentParser(description='Model evaluator')
-parser.add_argument("--model_name", type=str, default='facebook/opt-125m')
+parser.add_argument("--model_name", type=str, default='/mnt/disk5/maktukmak/models/quant/vicuna-7b-v1.1')
 args = parser.parse_args()
 
-model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code = True, torch_dtype=torch.float16).to('cuda')
+
+model_name = '/mnt/disk5/maktukmak/models/quant/vicuna-7b-v1.1'
+model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code = True, torch_dtype="auto")
 tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+
+model_name = 'lmsys/vicuna-7b-v1.1'
+model2 = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code = True, torch_dtype="auto")
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
 prompts = ["Somatic hypermutation allows the immune system to",
             "Hello, I'm a language model",
@@ -35,6 +41,7 @@ prompts = ["Somatic hypermutation allows the immune system to",
             "There are 5 groups of students in the class. Each group has 4 students. How many students are there in the class?",
             ]
 
+model = model.to('cuda')
 for prompt in prompts:
     inputs = tokenizer(prompt, return_tensors="pt").input_ids.to('cuda')
     outputs = model.generate(inputs, max_new_tokens=100, do_sample=True, top_k=50, top_p=0.95)

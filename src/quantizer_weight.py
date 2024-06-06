@@ -14,15 +14,16 @@ class quantizer_weight():
 
         self.b = b
         self.N = int(2**b)
+        self.qtype = qtype
 
-        if qtype == 'uniform':
+        if self.qtype == 'uniform':
             self.k_list = torch.arange(0, self.N-1).to(torch.int)
 
-        if qtype == 'nonuniform':
+        if self.qtype == 'nonuniform':
             self.sk_kmeans = True
             
 
-        if qtype == 'float':
+        if self.qtype == 'float':
             if self.b == 8:
                 if format_fp8=='e4m3':
                     self.E=4; self.M=3; self.bias=7; self.c=0
@@ -39,7 +40,8 @@ class quantizer_weight():
     def error(self, x, xint):
         if not hasattr(self, 'f'):
             self.f = torch.ones(x.shape)
-        err = torch.sum(((x - self.lk[xint])**2) * self.f) / torch.sum(self.f)
+        #err = torch.sum(((x - self.lk[xint])**2) * self.f) / torch.sum(self.f)
+        err = torch.sum(((x - self.lk[xint])**2)) / len(x)
         return err
     
     def q_function(self, x):
@@ -157,7 +159,7 @@ class quantizer_weight():
             self.lk = self.s * self.G + self.z
 
             if abs(err_prev - err) / err < 1e-5:
-                print('Loss', err)
+                #print('Loss', err)
                 return
             err_prev = err
         print('NOT CONVERGED !!!')
@@ -171,8 +173,8 @@ class quantizer_weight():
         self.z = self.minx + self.s/2
         self.lk = self.s * self.k_list + self.z
 
-        xint = self.quant(x)
-        err = self.error(x, xint)
+        #xint = self.quant(x)
+        #err = self.error(x, xint)
         #print(err)
 
     def fit_uniform_normal(self, x):
@@ -211,7 +213,7 @@ class quantizer_weight():
             self.lk = self.s * self.k_list + self.z
 
             if abs(err_prev - err) / err < 1e-5:
-                print('Loss', err)
+                #print('Loss', err)
                 return
             err_prev = err
         print('NOT CONVERGED !!!')
@@ -220,8 +222,8 @@ class quantizer_weight():
     def fit_nonuniform_quantile(self, x):
 
         x_sorted = torch.sort(x)[0]
-        k = torch.arange(0, self.N).to(torch.int)
-        ind = ((len(x)-1) * k / (self.N-1)).to(torch.int)
+        k = torch.arange(0, self.N)
+        ind = ((len(x)-1) * k.to(torch.float64) / (self.N-1)).to(torch.int)
         self.tk = x_sorted[ind]
         self.tk[0] = torch.nan_to_num(torch.tensor(-float('inf')))
         self.tk[-1] = torch.nan_to_num(torch.tensor(float('inf')))
@@ -234,7 +236,7 @@ class quantizer_weight():
         if not hasattr(self, 'lkopt'):
             self.fit_nonuniform_quantile(x)
             pdf = torch.distributions.normal.Normal(0., 1.)
-            tk = self.tk
+            tk = self.tk.to(torch.float64)
 
             for _ in range(500):
 
@@ -244,17 +246,16 @@ class quantizer_weight():
                 lk = -(P[1:] - P[:-1]) / (F[1:] - F[:-1])
                 tk[1:-1] = (lk[1:] + lk[0:-1])/2
 
-            self.lkopt = lk
-            self.tkopt = tk
+            self.lkopt = lk.to(torch.float32)
+            self.tkopt = tk.to(torch.float32)
 
-        
-        self.lk = x.std() * self.lkopt + x.mean()
+        self.lk = (x.std() * self.lkopt + x.mean())
         self.tk = x.mean()
 
 
     def fit_nonuniform_iterative(self, x, verbose=False):
 
-        self.fit_nonuniform_quantile(x)
+        self.fit_nonuniform_analytic(x)
 
         if not hasattr(self, 'f'):
             self.f = torch.ones(x.shape)
@@ -282,13 +283,51 @@ class quantizer_weight():
                     self.lk[k] = torch.sum(x[ind] * self.f[ind]) / torch.sum(self.f[ind])
 
                 if abs(err_prev - err) / err < 1e-5:
-                    print('Loss', err)
+                    #print('Loss', err)
                     return
                 err_prev = err
 
             print('NOT CONVERGED !!!')
             print(err)
 
+    def fit_and_quant(self, x, alg, nblocks=1, outlier_ratio=0.):
+
+        xdeq = torch.clone(x)
+
+        xint = torch.zeros(x.shape, dtype=torch.int)
+
+        block_size = len(x) // nblocks
+
+        for i in range(nblocks):
+
+            xb = x[i*block_size:(i+1)*block_size]
+
+            if self.qtype=='nonuniform':
+                if alg == 'iterative':
+                    self.fit_nonuniform_iterative(xb)
+                elif alg == 'quantile':
+                    self.fit_nonuniform_quantile(xb)
+                elif alg == 'snr':
+                    self.fit_nonuniform_analytic(xb)
+            elif self.qtype=='uniform':
+                if alg == 'iterative':
+                    self.fit_uniform_iterative(xb)
+                elif alg == 'minmax':
+                    self.fit_uniform_minmax(xb)
+                elif alg == 'snr':
+                    self.fit_uniform_normal(xb)
+            elif self.qtype=='float':
+                if alg == 'iterative':
+                    self.fit_float_iterative(xb)
+                elif alg == 'minmax':
+                    self.fit_float_minmax(xb)
+                elif alg == 'snr':
+                    self.fit_float_normal(xb)
+
+            xint[i*block_size:(i+1)*block_size] = self.quant(xb)
+            xdeq[i*block_size:(i+1)*block_size] = self.lk[xint[i*block_size:(i+1)*block_size]]
+
+        return xdeq
 
 
 

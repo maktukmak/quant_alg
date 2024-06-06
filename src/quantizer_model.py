@@ -17,6 +17,9 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM
 from functools import reduce
 
+
+# Log layer_name, mse, mae, time 
+
 class quantizer_model():
     def __init__(self, b):
         
@@ -47,12 +50,13 @@ class quantizer_model():
                 module.weight.data = module.weight.grad
             
                 
-    def fit_weight(self, model, fisher):
+    def fit_weight(self, model, fisher=None, qtype='float', nblocks=1, alg='snr', format_fp4='e3m0', format_fp8='e4m3'):
 
         def get_module_by_name(module, access_string):
             names = access_string.split(sep='.')
             return reduce(getattr, names, module)
 
+        quant = self.quantizer(b=self.b, qtype=qtype, format_fp4=format_fp4, format_fp8=format_fp4)  
 
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Linear) and name not in self.exclude_layers:
@@ -60,19 +64,20 @@ class quantizer_model():
                 print(name)
                 shape = module.weight.shape
 
-                F = get_module_by_name(fisher, name).weight.detach().flatten()
+                if fisher:
+                    F = get_module_by_name(fisher, name).weight.detach().flatten()
+                    quant.f = F.type(torch.float32)
+
                 w = module.weight.detach().flatten().type(torch.float32)
 
                 s = time.time()
-                quant = self.quantizer(w, b=self.b)  
-                quant.f = F.type(torch.float32)
-                quant.fit_nonuniform(w, verbose=False)
-                res = quant.lk[quant.quant(w)]
+                wdeq = quant.fit_and_quant(w, alg, nblocks=nblocks)
+                print('RMSE:', torch.sqrt(torch.mean(torch.square(w-wdeq))))
+                print('RMAE:', torch.sqrt(torch.mean(torch.abs(w-wdeq))))
                 print('Time:', time.time()-s)
 
-
                 if self.fake_quant:
-                    module.weight.data = res.reshape(shape).type(module.weight.dtype)
+                    module.weight.data = wdeq.reshape(shape).type(module.weight.dtype)
 
                 # else:   
                 #     module.levels = torch.nn.Parameter(quant.lk)

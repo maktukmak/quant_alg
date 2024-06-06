@@ -7,87 +7,40 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import time
 
 synthetic_data = False
+b = 4
+nblocks = 1
 
 if synthetic_data:
-    m = 512
-    #X = 2 * torch.rand([m,m]) - 1
+    m = 4096
     X = torch.randn([m,m])
     x = X.flatten()
-    b = 4
 else:
     model = AutoModelForCausalLM.from_pretrained("lmsys/vicuna-7b-v1.1", device_map="cpu").eval()
     x = model.model.layers[0].self_attn.q_proj.weight.detach().flatten().type(torch.float32)
-    b = 2
+    #x = model.model.layers[0].mlp.gate_proj.weight.detach().flatten().type(torch.float32)
+    # model = AutoModelForCausalLM.from_pretrained("facebook/opt-125m", device_map="cpu").eval()
+    # x = model.model.decoder.layers[0].fc1.weight.detach().flatten().type(torch.float32)
+    
 
+methods = [
+    ('uniform', 'minmax'),
+    #('uniform', 'iterative'),
+    ('uniform', 'snr'),
+    ('float', 'minmax'),
+    #('float', 'iterative'),
+    ('float', 'snr'),
+    #('nonuniform', 'iterative'),
+    ('nonuniform', 'quantile'),
+    ('nonuniform', 'snr'),
+    ]
 
-start = time.time()
-print('Uniform min-max')
-module = quantizer_weight(b, qtype = 'uniform')
-module.fit_uniform_minmax(x)
-xint = module.quant(x)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print(module.lk)
-print('Time:', time.time() - start)
+for (qtype, alg) in methods:
 
-start = time.time()
-print('Uniform iterative')
-module = quantizer_weight(b, qtype = 'uniform')
-module.fit_uniform_iterative(x, verbose=False)
-xint = module.quant(x)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print(module.lk)
-print('Time:', time.time() - start)
-
-start = time.time()
-print('Uniform analytic')
-module = quantizer_weight(b, qtype = 'uniform')
-module.fit_uniform_normal(x)
-xint = module.quant(x)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print(module.lk)
-print('Time:', time.time() - start)
-
-start = time.time()
-print('Non-uniform iterative')
-module = quantizer_weight(b, qtype = 'nonuniform')
-module.fit_nonuniform_iterative(x)
-xint = module.quant(x)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print(module.lk)
-print('Time:', time.time() - start)
-
-start = time.time()
-print('Non-uniform quantile')
-module = quantizer_weight(b, qtype = 'nonuniform')
-module.fit_nonuniform_quantile(x)
-xint = module.quant(x, use_threshold=False)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print(module.lk)
-print('Time:', time.time() - start)
-
-
-start = time.time()
-print('Non-uniform analytic')
-module = quantizer_weight(b, qtype = 'nonuniform')
-module.fit_nonuniform_analytic(x)
-xint = module.quant(x, use_threshold=False)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print(module.lk)
-print('Time:', time.time() - start)
-
-plt.hist(x.numpy(), bins=30)
-plt.xticks(module.lk.numpy(), rotation = 45)
-plt.show()
-plt.savefig('res.jpg')
-
-#print('Scale:', module.s)
-#print('Shift:', module.z)
-
-
+    start = time.time()
+    print((qtype, alg))
+    module = quantizer_weight(b, qtype = qtype)
+    xdeq = module.fit_and_quant(x, alg = alg, nblocks=nblocks)
+    print('RMSE:', torch.sqrt(torch.mean(torch.square(x-xdeq))))
+    print('RMAE:', torch.sqrt(torch.mean(torch.abs(x-xdeq))))
+    print('Time:', time.time() - start)
 
