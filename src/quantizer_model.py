@@ -50,13 +50,14 @@ class quantizer_model():
                 module.weight.data = module.weight.grad
             
                 
-    def fit_weight(self, model, fisher=None, qtype='float', nblocks=1, alg='snr', format_fp4='e3m0', format_fp8='e4m3'):
+    def fit_weight(self, model, fisher=None, qtype='float', block_size=1, alg='snr', decompose_outlier=False, format_fp4='e3m0', format_fp8='e4m3', verbose=False):
 
         def get_module_by_name(module, access_string):
             names = access_string.split(sep='.')
             return reduce(getattr, names, module)
 
         quant = self.quantizer(b=self.b, qtype=qtype, format_fp4=format_fp4, format_fp8=format_fp4)  
+        result = {}
 
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Linear) and name not in self.exclude_layers:
@@ -70,11 +71,16 @@ class quantizer_model():
 
                 w = module.weight.detach().flatten().type(torch.float32)
 
+                
                 s = time.time()
-                wdeq = quant.fit_and_quant(w, alg, nblocks=nblocks)
-                print('RMSE:', torch.sqrt(torch.mean(torch.square(w-wdeq))))
-                print('RMAE:', torch.sqrt(torch.mean(torch.abs(w-wdeq))))
-                print('Time:', time.time()-s)
+                wdeq = quant.fit_and_quant(w, alg, block_size=block_size, decompose_outlier=decompose_outlier)
+                rmse = torch.sqrt(torch.mean(torch.square(w-wdeq)))
+                rmae = torch.sqrt(torch.mean(torch.abs(w-wdeq)))
+                result[name] = (rmse, rmae)
+                if verbose: 
+                    print('RMSE:', rmse)
+                    print('RMAE:', rmae)
+                    print('Time:', time.time()-s)
 
                 if self.fake_quant:
                     module.weight.data = wdeq.reshape(shape).type(module.weight.dtype)
@@ -85,6 +91,8 @@ class quantizer_model():
                 #     module.weight.requires_grad = False
                 #     module.weight.data = quant.quant(w).reshape(shape).to(torch.int8)
                 #     self.recursive_setattr(model, name, self.replace_layer(module))
+
+        return result
 
     def replace_layer(self, module):
         shape = module.weight.shape

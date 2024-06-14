@@ -8,7 +8,9 @@ import time
 
 synthetic_data = False
 b = 4
-nblocks = 1
+block_size = None
+format_fp4='e2m1'
+format_fp8='e4m3'
 
 if synthetic_data:
     m = 4096
@@ -20,26 +22,27 @@ else:
     #x = model.model.layers[0].mlp.gate_proj.weight.detach().flatten().type(torch.float32)
     # model = AutoModelForCausalLM.from_pretrained("facebook/opt-125m", device_map="cpu").eval()
     # x = model.model.decoder.layers[0].fc1.weight.detach().flatten().type(torch.float32)
-    
+
+
 
 methods = [
-    ('uniform', 'minmax'),
+    #('uniform', 'minmax'),
     #('uniform', 'iterative'),
-    ('uniform', 'snr'),
+    #('uniform', 'snr'),
     ('float', 'minmax'),
-    #('float', 'iterative'),
+    ('float', 'iterative'),
     ('float', 'snr'),
-    #('nonuniform', 'iterative'),
-    ('nonuniform', 'quantile'),
-    ('nonuniform', 'snr'),
+    # ('nonuniform', 'iterative'),
+    # ('nonuniform', 'quantile'),
+    # ('nonuniform', 'snr'),
     ]
 
 for (qtype, alg) in methods:
 
     start = time.time()
     print((qtype, alg))
-    module = quantizer_weight(b, qtype = qtype)
-    xdeq = module.fit_and_quant(x, alg = alg, nblocks=nblocks)
+    module = quantizer_weight(b, qtype = qtype, format_fp4=format_fp4, format_fp8=format_fp8)
+    xdeq = module.fit_and_quant(x, alg = alg, block_size=block_size ,decompose_outlier=False)
     print('RMSE:', torch.sqrt(torch.mean(torch.square(x-xdeq))))
     print('RMAE:', torch.sqrt(torch.mean(torch.abs(x-xdeq))))
     print('Time:', time.time() - start)

@@ -16,12 +16,13 @@ class quantizer_weight():
         self.N = int(2**b)
         self.qtype = qtype
 
-        if self.qtype == 'uniform':
-            self.k_list = torch.arange(0, self.N-1).to(torch.int)
+        #if self.qtype == 'uniform':
+        self.k_list = torch.arange(0, self.N-1).to(torch.int)
 
         if self.qtype == 'nonuniform':
             self.sk_kmeans = True
             
+        self.block_size = None
 
         if self.qtype == 'float':
             if self.b == 8:
@@ -31,19 +32,28 @@ class quantizer_weight():
                     self.E=5; self.M=2; self.bias=15; self.c=3
             elif self.b == 4:
                 if format_fp4=='e2m1':
-                    self.E=2; self.M=1; self.bias=1; self.c=0
+                    self.E=2; self.M=1; self.bias=2; self.c=0
                 elif format_fp4=='e3m0':
-                    self.E=3; self.M=0; self.bias=1; self.c=0
+                    self.E=3; self.M=0; self.bias=3; self.c=0
 
             self.float_grid(self.E, self.M, self.bias, self.c)
 
-    def error(self, x, xint):
+    def error(self, x, xdeq):
         if not hasattr(self, 'f'):
             self.f = torch.ones(x.shape)
         #err = torch.sum(((x - self.lk[xint])**2) * self.f) / torch.sum(self.f)
-        err = torch.sum(((x - self.lk[xint])**2)) / len(x)
+        err = torch.sum(((x - xdeq)**2)) / len(x)
         return err
     
+    def compute_quant_levels(self):
+        if self.qtype == 'uniform':
+            lk = self.s * self.k_list + self.z
+        elif self.qtype == 'nonuniform':
+            lk = self.lk
+        elif self.qtype == 'float':
+            lk = self.G * self.s + self.z
+        return lk
+
     def q_function(self, x):
         return 0.5 - 0.5*special.erf(x/np.sqrt(2))
 
@@ -60,22 +70,33 @@ class quantizer_weight():
         res += torch.sum(vr**2 * p / (12*sigma2[:,None]), axis=1)
         return 1/res
 
-    def quant(self, x, use_threshold=False):
-        if use_threshold:
-            xint = torch.where((x[:,None] > self.tk[:-1]) * (x[:,None] <= self.tk[1:]))[1]
-        else:
-            xint = torch.argmin((x[:,None] - self.lk[None])**2, axis=1)
-        return xint.to(torch.int)
+    def quant_nonuniform(self, x, lk):
+        return torch.argmin((x[:,None] - lk)**2, axis=1).to(torch.int)
+   
+    def dequant_nonuniform(self, xint, lk):
+        return lk[torch.arange(len(xint)), xint]
 
-    def cast_to_fp8(self, x):
+    def quant_uniform(self, x, s, z):
+        return torch.clamp(torch.round((x - z) / s), 0, self.N-2).to(torch.int)
+
+    def dequant_uniform(self, xint, s, z):
+        return s * xint + z
+
+    def quant_float(self, x, s, z):
+        return self.cast_to_fp((x - z)/s) 
+
+    def dequant_float(self, xfloat, s, z):
+        return s * xfloat + z
+
+    def cast_to_fp(self, x):
+
+        x = torch.clamp(x, self.G[0], self.G[-1])
 
         v = 2**(torch.floor(torch.log2(torch.abs(x)) + 2**(-self.bias)) - self.M)
         v[torch.floor(torch.log2(torch.abs(x)) + self.bias) < 1] = 2**(1-self.M-self.bias)
         
-        x = torch.clamp(x, self.G[0], self.G[-1])
         Xf = v * torch.round(x / v)
-
-        #Xf = torch.sign(X.flatten()) * G[torch.argmin((torch.abs(X.flatten()[:,None]) - G[None]) ** 2, axis = 1)]
+        
         return Xf
 
     def float_grid(self, E=8, M=10, bias=15, special=0):
@@ -90,18 +111,18 @@ class quantizer_weight():
     
     def fit_float_cast(self, x):
 
-        self.s = 1
-        self.z = 0
-        self.lk = self.G * self.s + self.z
+        self.s = torch.tensor(1.)
+        self.z = torch.tensor(0.)
+        #self.lk = self.G * self.s + self.z
 
     def fit_float_minmax(self, x):
-
-        self.minx = torch.min(x)
-        self.maxx = torch.max(x)
+        
+        self.minx = torch.min(x.reshape(-1, self.block_size), axis=1)[0]
+        self.maxx = torch.max(x.reshape(-1, self.block_size), axis=1)[0]
 
         self.s = (self.maxx - self.minx) / (2*torch.max(self.G))
         self.z = self.minx + torch.max(self.G) * self.s
-        self.lk = self.G * self.s + self.z
+        #self.lk = self.G * self.s + self.z
 
     def fit_float_normal(self, x):
 
@@ -126,9 +147,12 @@ class quantizer_weight():
             gres = self.snr_float(C, sigma2, self.xr, self.vr)
             self.sigma2opt = sigma2[np.argmax(gres)]
 
-        self.s = torch.sqrt(x.var() / self.sigma2opt)
-        self.z = x.mean()
-        self.lk = self.G * self.s + self.z
+        xmean = torch.mean(x.reshape(-1, self.block_size), axis=1)
+        xvar = torch.var(x.reshape(-1, self.block_size), axis=1)
+
+        self.s = torch.sqrt(xvar / self.sigma2opt)
+        self.z = xmean
+        #self.lk = self.G * self.s + self.z
 
     def fit_float_iterative(self, x, f=None, verbose=False):
 
@@ -138,44 +162,46 @@ class quantizer_weight():
         self.fit_float_normal(x)
 
         denum_z = len(x)
+        nblocks = len(x) // self.block_size
 
-        err_prev = 1e10
-        for _ in range(2000):
-            xint = self.quant(x)
-            xfloat = self.G[xint]
+        for i in range(nblocks):
 
-            err = self.error(x, xint)
+            xb = x[i*self.block_size:(i+1)*self.block_size]
+            s,z = self.s[i], self.z[i]
 
-            if verbose:
-               print(err)
-            
-            num_s = torch.sum((x - self.z) * xfloat)
-            denum_s = torch.sum(xfloat**2)
-            num_z = torch.sum(x - self.s * xfloat)
+            sz_prev = torch.zeros(2)
+            for _ in range(2000):
+                xfloat = self.quant_float(xb, s, z)
+                #xfloat = self.G[xint]
 
-            self.s = num_s / denum_s
-            self.z = num_z / denum_z
-            
-            self.lk = self.s * self.G + self.z
+                sz = torch.tensor([s, z])
 
-            if abs(err_prev - err) / err < 1e-5:
-                #print('Loss', err)
-                return
-            err_prev = err
-        print('NOT CONVERGED !!!')
-        print(err)
+                num_s = torch.sum((xb - z) * xfloat)
+                denum_s = torch.sum(xfloat**2)
+                num_z = torch.sum(xb - s * xfloat)
+
+                s = num_s / denum_s
+                z = num_z / denum_z
+
+                self.s[i] = s
+                self.z[i] = z
+
+                if torch.sum(torch.abs(sz_prev - sz)) / torch.sum(torch.abs(sz)) < 1e-5:
+                    #print('Loss', err)
+                    return
+                sz_prev = sz
+            print('NOT CONVERGED !!!')
+            print(sz)
 
     def fit_uniform_minmax(self, x):
+        
+        self.minx = torch.min(x.reshape(-1, self.block_size), axis=1)[0]
+        self.maxx = torch.max(x.reshape(-1, self.block_size), axis=1)[0]
 
-        self.minx = torch.min(x)
-        self.maxx = torch.max(x)
         self.s = (self.maxx - self.minx) / (self.N-1)
         self.z = self.minx + self.s/2
-        self.lk = self.s * self.k_list + self.z
+        #self.lk = self.s[:,None] * self.k_list  + self.z[:,None]
 
-        #xint = self.quant(x)
-        #err = self.error(x, xint)
-        #print(err)
 
     def fit_uniform_normal(self, x):
 
@@ -184,59 +210,73 @@ class quantizer_weight():
             gres = self.snr_uni(z, self.N)
             self.zeta = z[np.argmax(gres)]
 
-        self.s = (2 * np.sqrt(self.zeta * x.var())) / (self.N-1)
-        self.z = - self.s * (self.N/2 - 1) + x.mean()
-        self.lk = self.s * self.k_list + self.z
+        xmean = torch.mean(x.reshape(-1, self.block_size), axis=1)
+        xvar = torch.var(x.reshape(-1, self.block_size), axis=1)
+
+        self.s = (2 * np.sqrt(self.zeta * xvar)) / (self.N-1)
+        self.z = - self.s * (self.N/2 - 1) + xmean
+        #self.lk = self.s * self.k_list + self.z
     
     def fit_uniform_iterative(self, x, verbose=False):
 
         self.fit_uniform_normal(x)
 
-        denum_z = len(x)
+        nblocks = len(x) // self.block_size
 
-        err_prev = 1e10
-        for _ in range(2000):
-            xint = self.quant(x)
+        for i in range(nblocks):
 
-            err = self.error(x, xint)
+            xb = x[i*self.block_size:(i+1)*self.block_size]
+            s,z = self.s[i], self.z[i]
 
-            if verbose:
-               print(err)
-            
-            num_s = torch.sum((x - self.z) * xint)
-            denum_s = torch.sum(xint**2)
-            num_z = torch.sum(x - self.s * xint)
+            denum_z = len(xb)
+            sz_prev = torch.zeros(2)
+            for _ in range(2000):
 
-            self.s = num_s / denum_s
-            self.z = num_z / denum_z
-            
-            self.lk = self.s * self.k_list + self.z
+                xint = self.quant_uniform(xb, s, z)
 
-            if abs(err_prev - err) / err < 1e-5:
-                #print('Loss', err)
-                return
-            err_prev = err
-        print('NOT CONVERGED !!!')
-        print(err)
+                sz = torch.tensor([s, z])
+
+                num_s = torch.sum((xb - z) * xint)
+                denum_s = torch.sum(xint**2)
+                num_z = torch.sum(xb - s * xint)
+
+                s = num_s / denum_s
+                z = num_z / denum_z
+
+                self.s[i] = s
+                self.z[i] = z
+                
+                #self.lk = self.s * self.k_list + self.z
+
+                if torch.sum(torch.abs(sz_prev - sz)) / torch.sum(torch.abs(sz)) < 1e-5:
+                    #print('Loss', err)
+                    return
+                sz_prev = sz
+            print('NOT CONVERGED !!!')
+            print(sz)
 
     def fit_nonuniform_quantile(self, x):
 
-        x_sorted = torch.sort(x)[0]
+        nblocks = len(x) // self.block_size
+
+        x_sorted = torch.sort(x.reshape(-1, self.block_size), axis=1)[0]
         k = torch.arange(0, self.N)
-        ind = ((len(x)-1) * k.to(torch.float64) / (self.N-1)).to(torch.int)
-        self.tk = x_sorted[ind]
-        self.tk[0] = torch.nan_to_num(torch.tensor(-float('inf')))
-        self.tk[-1] = torch.nan_to_num(torch.tensor(float('inf')))
-        self.lk = torch.zeros(self.N-1)
+        ind = ((self.block_size-1) * k.to(torch.float64) / (self.N-1)).to(torch.int)
+        self.tk = x_sorted[:, ind]
+        self.tk[:,0] = torch.nan_to_num(torch.tensor(-float('inf')))
+        self.tk[:,-1] = torch.nan_to_num(torch.tensor(float('inf')))
+        self.lk = torch.zeros(nblocks, self.N-1)
         for i in k-1:
-            self.lk[i] = torch.mean(x_sorted[ind[i]:ind[i+1]])
+            self.lk[:,i] = torch.mean(x_sorted[:,ind[i]:ind[i+1]], axis=1)
 
     def fit_nonuniform_analytic(self, x):
 
         if not hasattr(self, 'lkopt'):
-            self.fit_nonuniform_quantile(x)
+            tk = torch.quantile(torch.randn(1000), torch.arange(self.N)/(self.N-1))
+            tk[0] = torch.nan_to_num(torch.tensor(-float('inf')))
+            tk[-1] = torch.nan_to_num(torch.tensor(float('inf')))
             pdf = torch.distributions.normal.Normal(0., 1.)
-            tk = self.tk.to(torch.float64)
+            tk = tk.to(torch.float64)
 
             for _ in range(500):
 
@@ -249,83 +289,86 @@ class quantizer_weight():
             self.lkopt = lk.to(torch.float32)
             self.tkopt = tk.to(torch.float32)
 
-        self.lk = (x.std() * self.lkopt + x.mean())
-        self.tk = x.mean()
+        xmean = torch.mean(x.reshape(-1, self.block_size), axis=1)
+        xstd = torch.std(x.reshape(-1, self.block_size), axis=1)
+
+        self.lk = (xstd[:,None] * self.lkopt + xmean[:,None])
+        #self.tk = x.mean()
 
 
     def fit_nonuniform_iterative(self, x, verbose=False):
 
         self.fit_nonuniform_analytic(x)
+        #self.fit_uniform_minmax(x)
 
         if not hasattr(self, 'f'):
             self.f = torch.ones(x.shape)
 
-        if self.sk_kmeans:
-
-
-            kmeans = KMeans(n_clusters=self.N-1, init=self.lk.reshape(-1,1), max_iter=500, tol=1e-5)
-            kmeans.fit(x.reshape(-1,1), self.f, )
-            self.lk = torch.tensor(kmeans.cluster_centers_[:,0])
-
-        else:
-            err_prev = 1e10
-            for _ in range(500):
-
-                xint = self.quant(x)
-                err = self.error(x, xint)
-                
-
-                if verbose:
-                    print(err)
-
-                for k in self.k_list:
-                    ind = (xint == k)
-                    self.lk[k] = torch.sum(x[ind] * self.f[ind]) / torch.sum(self.f[ind])
-
-                if abs(err_prev - err) / err < 1e-5:
-                    #print('Loss', err)
-                    return
-                err_prev = err
-
-            print('NOT CONVERGED !!!')
-            print(err)
-
-    def fit_and_quant(self, x, alg, nblocks=1, outlier_ratio=0.):
-
-        xdeq = torch.clone(x)
-
-        xint = torch.zeros(x.shape, dtype=torch.int)
-
-        block_size = len(x) // nblocks
+        nblocks = len(x) // self.block_size
 
         for i in range(nblocks):
 
-            xb = x[i*block_size:(i+1)*block_size]
+            xb = x[i*self.block_size:(i+1)*self.block_size]
+            lk = self.lk[i]
 
-            if self.qtype=='nonuniform':
-                if alg == 'iterative':
-                    self.fit_nonuniform_iterative(xb)
-                elif alg == 'quantile':
-                    self.fit_nonuniform_quantile(xb)
-                elif alg == 'snr':
-                    self.fit_nonuniform_analytic(xb)
-            elif self.qtype=='uniform':
-                if alg == 'iterative':
-                    self.fit_uniform_iterative(xb)
-                elif alg == 'minmax':
-                    self.fit_uniform_minmax(xb)
-                elif alg == 'snr':
-                    self.fit_uniform_normal(xb)
-            elif self.qtype=='float':
-                if alg == 'iterative':
-                    self.fit_float_iterative(xb)
-                elif alg == 'minmax':
-                    self.fit_float_minmax(xb)
-                elif alg == 'snr':
-                    self.fit_float_normal(xb)
+            kmeans = KMeans(n_clusters=self.N-1, init=lk.reshape(-1,1), max_iter=500, tol=1e-5)
+            kmeans.fit(xb.reshape(-1,1), self.f, )
+            self.lk[i] = torch.tensor(kmeans.cluster_centers_[:,0])
 
-            xint[i*block_size:(i+1)*block_size] = self.quant(xb)
-            xdeq[i*block_size:(i+1)*block_size] = self.lk[xint[i*block_size:(i+1)*block_size]]
+    
+    def fit_and_quant(self, x, alg, block_size=None, decompose_outlier=False):
+
+
+
+        xdeq = torch.clone(x)
+
+        ind_nonoutlier = torch.arange(len(x), dtype=torch.int)
+        if decompose_outlier:
+            ind_nonoutlier = torch.where(abs(x-x.mean()) < 3*x.std())[0]
+            x = x[ind_nonoutlier]
+
+        if block_size:
+            self.block_size=block_size
+        else:
+            self.block_size=len(x)
+
+
+        if self.qtype=='nonuniform':
+            if alg == 'iterative':
+                self.fit_nonuniform_iterative(x)
+            elif alg == 'quantile':
+                self.fit_nonuniform_quantile(x)
+            elif alg == 'snr':
+                self.fit_nonuniform_analytic(x)
+            xdeq[ind_nonoutlier] = self.dequant_nonuniform(self.quant_nonuniform(x, torch.repeat_interleave(self.lk, self.block_size,axis=0)),
+                                                                                torch.repeat_interleave(self.lk, self.block_size,axis=0))
+
+        elif self.qtype=='uniform':
+            if alg == 'iterative':
+                self.fit_uniform_iterative(x)
+            elif alg == 'minmax':
+                self.fit_uniform_minmax(x)
+            elif alg == 'snr':
+                self.fit_uniform_normal(x)
+            xdeq[ind_nonoutlier] = self.dequant_uniform(self.quant_uniform(x, torch.repeat_interleave(self.s, self.block_size),
+                                                                        torch.repeat_interleave(self.z, self.block_size)),
+                                                                         torch.repeat_interleave(self.s, self.block_size),
+                                                                           torch.repeat_interleave(self.z, self.block_size))
+
+        elif self.qtype=='float':
+            if alg == 'iterative':
+                self.fit_float_iterative(x)
+            elif alg == 'minmax':
+                self.fit_float_minmax(x)
+            elif alg == 'snr':
+                self.fit_float_normal(x)
+            elif alg == 'cast':
+                self.fit_float_cast(x)
+            xdeq[ind_nonoutlier] = self.dequant_float(self.quant_float(x, torch.repeat_interleave(self.s, self.block_size),
+                                                                        torch.repeat_interleave(self.z, self.block_size)),
+                                                                         torch.repeat_interleave(self.s, self.block_size),
+                                                                           torch.repeat_interleave(self.z, self.block_size))
+
 
         return xdeq
 

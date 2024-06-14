@@ -14,7 +14,7 @@ parser.add_argument("--batch_size", type=int, default=16, help='batch_size')
 args = parser.parse_args()
 
 
-model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code = True, torch_dtype=torch.float16).to('cuda')
+model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code = True, torch_dtype=torch.float16).to('cpu')
 tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
 
 #model = torch.load("./models/quant/" + 'opt_125m').to('cuda')

@@ -9,10 +9,9 @@ import seaborn as sns
 
 
 synthetic_data = False
-b = 8
 if synthetic_data:
     m = 2048
-    #X = 2 * torch.rand([m,m])
+    #X = 2 * torch.rand([m,m])-1
     X = torch.randn([m,m])
     x = X.flatten()
 else:
@@ -20,83 +19,41 @@ else:
     x = model.model.layers[0].self_attn.q_proj.weight.detach().flatten().type(torch.float32)
     
 
+format_fp4='e2m1'
+format_fp8='e4m3'
+dlim = {8:0.003, 4:0.03}
 
-b = 8
+for b in [8, 4]:
 
-start = time.time()
-print('Uniform normal')
-module = quantizer_weight(x, b)
-module.fit_uniform_normal(x)
-xint = module.quant(x)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print('Time:', time.time() - start)
+    lim = dlim[b]
+    
+    print('Uniform normal')
+    module = quantizer_weight(b, qtype='uniform')
+    xdeq = module.fit_and_quant(x, alg='snr')
+    lk = module.compute_quant_levels()
 
-ind = (x > module.lk[0]) & (x < module.lk[-1])
-plt.xlim(-0.003, 0.003)
-sns.histplot((x[ind]-module.lk[xint[ind]]).numpy(), bins=50, stat="probability")
-plt.xlabel('Error')
-plt.savefig('hist_error_uni8.jpg', bbox_inches='tight')
-plt.show()
+    ind = (x > lk[0]) & (x < lk[-1])
+    plt.xlim(-lim, lim)
+    sns.histplot((x[ind]-xdeq[ind]).numpy(), bins=50, stat="probability")
+    #plt.xscale('symlog', base=2)
+    plt.xlabel('Error')
+    plt.savefig('hist_error_uni' + str(b) + '.jpg', bbox_inches='tight')
+    plt.show()
+    plt.close()
 
-start = time.time()
-print('Float min-max')
-module = quantizer_weight(x, b)
-module.fit_float_normal(x)
-xint = module.quant(x)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print('Time:', time.time() - start)
+    print('Float normal')
+    module = quantizer_weight(b, qtype='float', format_fp4=format_fp4)
+    xdeq = module.fit_and_quant(x, alg='snr')
+    lk = module.compute_quant_levels()
 
-e = (x-module.lk[xint]).numpy()
-max_s = (module.lk[1] - module.lk[0]).numpy()
-sns.histplot(e[abs(e)<max_s/2], bins=1000, stat="probability")
-plt.xlim(-0.003, 0.003)
-plt.xlabel('Error')
-plt.savefig('hist_error_float8.jpg', bbox_inches='tight')
-plt.show()
-
-
-
+    e = (x-xdeq).numpy()
+    max_s = (lk[1] - lk[0]).numpy()
+    sns.histplot(e[abs(e)<max_s/2], bins=1000, stat="probability")
+    plt.xlim(-lim, lim)
+    #plt.xscale('symlog', base=2)
+    plt.xlabel('Error')
+    plt.savefig('hist_error_float' + str(b) + '.jpg', bbox_inches='tight')
+    plt.show()
+    plt.close()
 
 
-
-
-
-
-
-
-b = 4
-
-start = time.time()
-print('Uniform normal')
-module = quantizer_weight(x, b)
-module.fit_uniform_normal(x)
-xint = module.quant(x)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print('Time:', time.time() - start)
-
-ind = (x > module.lk[0]) & (x < module.lk[-1])
-plt.xlim(-0.03, 0.03)
-sns.histplot((x[ind]-module.lk[xint[ind]]).numpy(), bins=50, stat="probability")
-plt.xlabel('Error')
-plt.savefig('hist_error_uni4.jpg', bbox_inches='tight')
-plt.show()
-
-start = time.time()
-print('Float normal')
-module = quantizer_weight(x, b)
-module.fit_float_normal(x)
-xint = module.quant(x)
-print('MSE:', torch.sqrt(module.error(x, xint)))
-print('MAE:', torch.sqrt(torch.mean(torch.abs(x-module.lk[xint]))))
-print('Time:', time.time() - start)
-
-e = (x-module.lk[xint]).numpy()
-max_s = (module.lk[1] - module.lk[0]).numpy()
-sns.histplot(e[abs(e)<max_s/2], bins=100, stat="probability")
-plt.xlim(-0.03, 0.03)
-plt.xlabel('Error')
-plt.savefig('hist_error_float4.jpg', bbox_inches='tight')
-plt.show()
