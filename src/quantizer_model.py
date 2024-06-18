@@ -56,7 +56,7 @@ class quantizer_model():
             names = access_string.split(sep='.')
             return reduce(getattr, names, module)
 
-        quant = self.quantizer(b=self.b, qtype=qtype, format_fp4=format_fp4, format_fp8=format_fp4)  
+        self.quant = self.quantizer(b=self.b, qtype=qtype, format_fp4=format_fp4, format_fp8=format_fp8)  
         result = {}
 
         for name, module in model.named_modules():
@@ -67,13 +67,13 @@ class quantizer_model():
 
                 if fisher:
                     F = get_module_by_name(fisher, name).weight.detach().flatten()
-                    quant.f = F.type(torch.float32)
+                    self.quant.f = F.type(torch.float32)
 
                 w = module.weight.detach().flatten().type(torch.float32)
 
                 
                 s = time.time()
-                wdeq = quant.fit_and_quant(w, alg, block_size=block_size, decompose_outlier=decompose_outlier)
+                wdeq = self.quant.fit_and_quant(w, alg, block_size=block_size, decompose_outlier=decompose_outlier)
                 rmse = torch.sqrt(torch.mean(torch.square(w-wdeq)))
                 rmae = torch.sqrt(torch.mean(torch.abs(w-wdeq)))
                 result[name] = (rmse, rmae)

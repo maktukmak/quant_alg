@@ -5,10 +5,14 @@ from datetime import datetime
 from torch.utils.data import DataLoader, TensorDataset, random_split
 from src.quantizer_model import quantizer_model
 
+
+mode = 'QAT'
+b = 4
+
 class LinearModel(nn.Module):
     def __init__(self):
         super(LinearModel, self).__init__()
-        self.fc = nn.Linear(1, 1)
+        self.fc = nn.Linear(10, 1,bias=False)
 
     def forward(self, x):
         x = self.fc(x)
@@ -20,20 +24,18 @@ loss_fn = torch.nn.MSELoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
 
-X = torch.arange(-5, 5, 0.01).view(-1, 1)
-func = -5 * X
-Y = func + 0.4 * torch.randn(X.size())
+X = torch.randn((1000, 10))
+W = torch.randn((1,10))
+Y = X @ W.T +  torch.randn((1000,1))
 my_dataset = TensorDataset(X,Y)
-
 train_size = int(0.8 * len(X))
 val_size = len(X) - train_size
-
 data_train, data_val = random_split(my_dataset, [train_size, val_size])
-
 training_loader = DataLoader(data_train, batch_size=16, shuffle=True)
 validation_loader = DataLoader(data_val, batch_size=16, shuffle=True)
 
-quantizer = quantizer_model(b=8)
+
+quantizer = quantizer_model(b=b)
 
 def train_one_epoch(epoch_index, tb_writer):
     running_loss = 0.
@@ -43,13 +45,13 @@ def train_one_epoch(epoch_index, tb_writer):
 
         inputs, labels = data
 
-
-        quantizer.fit_weight(model, 
-                             fisher=None, 
-                             qtype='float', 
-                             block_size=None, 
-                             alg='cast', 
-                             decompose_outlier=None)
+        if mode == 'QAT':
+            quantizer.fit_weight(model, 
+                                fisher=None, 
+                                qtype='float', 
+                                block_size=None, 
+                                alg='cast', 
+                                decompose_outlier=None)
 
 
         optimizer.zero_grad()
@@ -69,6 +71,16 @@ def train_one_epoch(epoch_index, tb_writer):
 
     return running_loss
 
+def val_eval():
+    running_vloss = 0.0
+    # Disable gradient computation and reduce memory consumption.
+    with torch.no_grad():
+        for i, vdata in enumerate(validation_loader):
+            vinputs, vlabels = vdata
+            voutputs = model(vinputs)
+            vloss = loss_fn(voutputs, vlabels)
+            running_vloss += vloss
+    return running_vloss, i
 
 epoch_number = 0
 EPOCHS = 5
@@ -85,35 +97,33 @@ for epoch in range(EPOCHS):
     avg_loss = train_one_epoch(epoch_number, writer)
 
 
-    running_vloss = 0.0
+    # Quantize before evaluation (QAT)
+    if mode == 'QAT':
+        quantizer.fit_weight(model, 
+                                fisher=None, 
+                                qtype='minmax', 
+                                block_size=None, 
+                                alg='cast', 
+                                decompose_outlier=None)
+
     # Set the model to evaluation mode, disabling dropout and using population
     # statistics for batch normalization.
     model.eval()
 
-    # Disable gradient computation and reduce memory consumption.
-    with torch.no_grad():
-        for i, vdata in enumerate(validation_loader):
-            vinputs, vlabels = vdata
-            voutputs = model(vinputs)
-            vloss = loss_fn(voutputs, vlabels)
-            running_vloss += vloss
-
+    running_vloss, i  = val_eval()
     avg_vloss = running_vloss / (i + 1)
     print('LOSS train {} valid {}'.format(avg_loss, avg_vloss))
-
-    # Log the running loss averaged per batch
-    # for both training and validation
-    writer.add_scalars('Training vs. Validation Loss',
-                    { 'Training' : avg_loss, 'Validation' : avg_vloss },
-                    epoch_number + 1)
-    writer.flush()
-
-    # Track best performance, and save the model's state
-    if avg_vloss < best_vloss:
-        best_vloss = avg_vloss
-        #model_path = 'model_{}_{}'.format(timestamp, epoch_number)
-        #torch.save(model.state_dict(), model_path)
 
     epoch_number += 1
 
 
+quantizer.fit_weight(model, 
+                    fisher=None, 
+                    qtype='minmax', 
+                    block_size=None, 
+                    alg='cast', 
+                    decompose_outlier=None)
+
+running_vloss, i  = val_eval()
+avg_vloss = running_vloss / (i + 1)
+print('LOSS train {} valid {}'.format(avg_loss, avg_vloss))
