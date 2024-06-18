@@ -26,8 +26,9 @@ do
                     --qtype=$1\
                     --alg=$2\
                     --b 2\
-                    --decompose_outlier &&
-                    #--block_size 16 &&
+                    --block_size 4096 &&
+                    #--decompose_outlier &&
+                    
                     
                     
 

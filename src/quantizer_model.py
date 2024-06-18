@@ -61,8 +61,8 @@ class quantizer_model():
 
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Linear) and name not in self.exclude_layers:
-
-                print(name)
+                if verbose: 
+                    print(name)
                 shape = module.weight.shape
 
                 if fisher:
