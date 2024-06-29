@@ -10,7 +10,7 @@ from scipy import special
 # Fix self.f
 
 class quantizer_weight():
-    def __init__(self, b, f=None, qtype='float', format_fp4='e3m0', format_fp8='e4m3'):
+    def __init__(self, b, f=None, qtype='float', format_fp4='e3m0', format_fp8='e4m3', format_fp16='fp'):
 
         self.b = b
         self.N = int(2**b)
@@ -35,6 +35,11 @@ class quantizer_weight():
                     self.E=2; self.M=1; self.bias=2; self.c=0
                 elif format_fp4=='e3m0':
                     self.E=3; self.M=0; self.bias=3; self.c=0
+            elif self.b == 16:
+                if format_fp16 == 'fp':
+                    self.E=5; self.M=10; self.bias=15; self.c=0
+                elif format_fp16 == 'bf':
+                    self.E=8; self.M=7; self.bias=127; self.c=0
 
             self.float_grid(self.E, self.M, self.bias, self.c)
 

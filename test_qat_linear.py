@@ -4,18 +4,35 @@ from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 from torch.utils.data import DataLoader, TensorDataset, random_split
 from src.quantizer_model import quantizer_model
+from src.quantizer_weight import quantizer_weight
+torch.manual_seed(0)
 
-
-mode = 'QAT'
+mode = 'QAT'   # QAT, PTQ
 b = 4
+qtype = 'float'
+alg = 'minmax'
+quantize_act = True
+EPOCHS = 300
+
+nsamples = 2000
+batch_size = 32
+dim = 10
 
 class LinearModel(nn.Module):
     def __init__(self):
         super(LinearModel, self).__init__()
-        self.fc = nn.Linear(10, 1,bias=False)
+        self.fc1 = nn.Linear(10, 10,bias=False)
+        self.fc2 = nn.Linear(10, 1,bias=False)
+        self.quantizer = quantizer_weight(b, f=None, qtype=qtype, format_fp4='e3m0', format_fp8='e4m3', format_fp16='fp')
 
     def forward(self, x):
-        x = self.fc(x)
+        if quantize_act:
+            x = self.quantizer.fit_and_quant(x.flatten(), alg).reshape(x.shape)
+        x = self.fc1(x)
+        x = torch.nn.functional.relu(x)
+        # if quantize_act:
+        #     x = self.quantizer.fit_and_quant(x.flatten(), alg).reshape(x.shape)
+        x = self.fc2(x)
         return x
 
 
@@ -24,20 +41,23 @@ loss_fn = torch.nn.MSELoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
 
-X = torch.randn((1000, 10))
-W = torch.randn((1,10))
-Y = X @ W.T +  torch.randn((1000,1))
+X = torch.randn((nsamples, dim))
+W = torch.randn((1,dim))
+Y = X @ W.T +  torch.randn((nsamples,1))
 my_dataset = TensorDataset(X,Y)
 train_size = int(0.8 * len(X))
 val_size = len(X) - train_size
 data_train, data_val = random_split(my_dataset, [train_size, val_size])
-training_loader = DataLoader(data_train, batch_size=16, shuffle=True)
-validation_loader = DataLoader(data_val, batch_size=16, shuffle=True)
+training_loader = DataLoader(data_train, batch_size=batch_size, shuffle=True)
+validation_loader = DataLoader(data_val, batch_size=batch_size, shuffle=True)
+
+
 
 
 quantizer = quantizer_model(b=b)
 
-def train_one_epoch(epoch_index, tb_writer):
+
+def train_one_epoch(epoch_index):
     running_loss = 0.
     last_loss = 0.
 
@@ -48,11 +68,10 @@ def train_one_epoch(epoch_index, tb_writer):
         if mode == 'QAT':
             quantizer.fit_weight(model, 
                                 fisher=None, 
-                                qtype='float', 
+                                qtype=qtype, 
                                 block_size=None, 
-                                alg='cast', 
+                                alg=alg, 
                                 decompose_outlier=None)
-
 
         optimizer.zero_grad()
         outputs = model(inputs)
@@ -65,8 +84,6 @@ def train_one_epoch(epoch_index, tb_writer):
         if i % 1000 == 999:
             last_loss = running_loss / 1000 # loss per batch
             print('  batch {} loss: {}'.format(i + 1, last_loss))
-            tb_x = epoch_index * len(training_loader) + i + 1
-            tb_writer.add_scalar('Loss/train', last_loss, tb_x)
             running_loss = 0.
 
     return running_loss
@@ -83,27 +100,24 @@ def val_eval():
     return running_vloss, i
 
 epoch_number = 0
-EPOCHS = 5
 best_vloss = 1_000_000.
 
-timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-writer = SummaryWriter('runs/fashion_trainer_{}'.format(timestamp))
 
 for epoch in range(EPOCHS):
     print('EPOCH {}:'.format(epoch_number + 1))
 
     # Make sure gradient tracking is on, and do a pass over the data
     model.train(True)
-    avg_loss = train_one_epoch(epoch_number, writer)
+    avg_loss = train_one_epoch(epoch_number)
 
 
     # Quantize before evaluation (QAT)
     if mode == 'QAT':
         quantizer.fit_weight(model, 
                                 fisher=None, 
-                                qtype='minmax', 
+                                qtype=qtype, 
                                 block_size=None, 
-                                alg='cast', 
+                                alg=alg, 
                                 decompose_outlier=None)
 
     # Set the model to evaluation mode, disabling dropout and using population
@@ -119,11 +133,15 @@ for epoch in range(EPOCHS):
 
 quantizer.fit_weight(model, 
                     fisher=None, 
-                    qtype='minmax', 
+                    qtype=qtype, 
                     block_size=None, 
-                    alg='cast', 
+                    alg=alg, 
                     decompose_outlier=None)
 
 running_vloss, i  = val_eval()
 avg_vloss = running_vloss / (i + 1)
 print('LOSS train {} valid {}'.format(avg_loss, avg_vloss))
+
+
+print(W)
+print(model.fc2.weight)

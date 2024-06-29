@@ -8,6 +8,31 @@ from src.quantizer_weight import quantizer_weight
 from src.utils import cast_to_fp8
 import pytest
 
+
+@pytest.mark.parametrize("format_fp16", ['fp'])
+def test_fp16_cast(format_fp16):
+    m = 4096
+
+    module = quantizer_weight(b=16, qtype='float', format_fp16=format_fp16)
+
+    X = torch.sqrt(torch.max(module.G)) * torch.randn([m,m])
+    x = X.flatten()
+
+    # Rounding
+    xdeqr = module.fit_and_quant(x, alg='cast').to(torch.float16)
+
+    # Torch native
+    if format_fp16 == 'fp':
+        xt = x.to(torch.float16)
+
+
+    cond1 = torch.equal(xdeqr, xt) # Rounding vs torch
+    cond3 = torch.all(torch.isin(xdeqr.unique(), module.G)) # Grid points vs torch
+
+    assert cond1 and cond3
+
+
+
 @pytest.mark.parametrize("format_fp8", ['e4m3', 'e5m2'])
 def test_fp8_cast(format_fp8):
     m = 4096
