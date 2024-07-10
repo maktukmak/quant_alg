@@ -155,6 +155,7 @@ class quantizer_weight():
         xmean = torch.mean(x.reshape(-1, self.block_size), axis=1)
         xvar = torch.var(x.reshape(-1, self.block_size), axis=1)
 
+
         self.s = torch.sqrt(xvar / self.sigma2opt)
         self.z = xmean
         #self.lk = self.G * self.s + self.z
@@ -322,8 +323,6 @@ class quantizer_weight():
 
     
     def fit_and_quant(self, x, alg, block_size=None, decompose_outlier=False):
-
-
 
         xdeq = torch.clone(x)
 

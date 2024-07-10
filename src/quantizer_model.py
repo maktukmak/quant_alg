@@ -74,10 +74,11 @@ class quantizer_model():
                 
                 s = time.time()
                 wdeq = self.quant.fit_and_quant(w, alg, block_size=block_size, decompose_outlier=decompose_outlier)
-                rmse = torch.sqrt(torch.mean(torch.square(w-wdeq)))
-                rmae = torch.sqrt(torch.mean(torch.abs(w-wdeq)))
-                result[name] = (rmse, rmae)
+
                 if verbose: 
+                    rmse = torch.sqrt(torch.mean(torch.square(w-wdeq)))
+                    rmae = torch.sqrt(torch.mean(torch.abs(w-wdeq)))
+                    result[name] = (rmse, rmae)
                     print('RMSE:', rmse)
                     print('RMAE:', rmae)
                     print('Time:', time.time()-s)
